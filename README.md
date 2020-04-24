@@ -2,7 +2,7 @@
 Generates input files for the LymphGen lymphoma classifier. See https://llmpp.nih.gov/lymphgen/index.php.
 
 ## Description
-Using an input MAF file and a TSV file containing copy-number alterations (optional), generate the inpur files required for use with the lymphGen classifier.
+Using an input MAF file and a TSV file containing copy-number alterations (optional), generate the input files required for use with the LymphGen classifier.
 Gene IDs are converted from Hugo names to Entrez IDs, and copy number segments are overlapped with gene regions and chromosome arms to
 identify genes affected by such events
 

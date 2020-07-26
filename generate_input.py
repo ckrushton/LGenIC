@@ -9,6 +9,7 @@ import os
 import sys
 import bisect
 from collections import Counter
+from sortedcontainers import SortedSet
 
 
 class Gene:
@@ -82,6 +83,127 @@ class SampleCNVs:
         self.len_seg = {}
         self.is_chr_prefixed = None
 
+    def mergeOverlappingCNVs(self, existStarts: iter, existEnds: iter, existCNs: iter, newStart: int, newEnd: int, newCN:int):
+        """
+        Handle overlapping copy number segments, merging and editing existing segments as necessary
+
+        In essence, if this segment overlaps an existing segment with the same copy number state, those segments are merged
+        together. If the copy number state is different, the largest increase is kept,
+         truncating or even breaking apart the copy-neutral segment in the process. In the worse case senario,
+        this will lead to three different segments being created
+
+        :param oldStart: The start position of the existing segment
+        :param oldEnd: The end position of the existing segment
+        :param oldCN: The copy number state of the existing segment
+        :param newStart: The start position of the new segment
+        :param newEnd: The end position of the new segment
+        :param newCN: The copy number state of the new segment
+        :return: A tuple containing the new and old events. Ex {[newEvent1, newEvent2], [oldEvent1, oldEvent2]}
+        """
+
+        def reduceNewEvent(existStarts, existEnds, existCNs, newStart, newEnd, newCN, oldStart, oldEnd):
+
+            # The existing event has higher priority than the old event
+            # Truncate the newer event
+            # Since this could break the newer event apart into two pieces, lets do that now, and see
+            # if the output segments are valid
+            outStart1 = newStart
+            outEnd1 = oldStart
+            outStart2 = oldEnd
+            outEnd2 = newEnd
+            if outStart1 < outEnd1:  # Valid segment, process
+                existStarts, existEnds, existCNs = self.mergeOverlappingCNVs(existStarts, existEnds, existCNs,
+                                                                             outStart1, outEnd1, newCN)
+            if outStart2 < outEnd2:  # Valid segment
+                existStarts, existEnds, existCNs = self.mergeOverlappingCNVs(existStarts, existEnds, existCNs,
+                                                                             outStart2, outEnd2, newCN)
+            return existStarts, existEnds, existCNs
+
+        def reduceOldEvent(existStarts, existEnds, existCNs, newStart, newEnd, newCN, oldStart, oldEnd, oldCN):
+
+            # The newer event is a "higher"-level deletion
+            # Split/Truncate the older event
+            outStart1 = oldStart
+            outEnd1 = newStart
+            outStart2 = newEnd
+            outEnd2 = oldEnd
+            outCN = oldCN
+            # Delete existing event
+            existStarts.pop(start_bisect)
+            existEnds.pop(start_bisect)
+            existCNs.pop(start_bisect)
+
+            if outStart2 < outEnd2:  # Valid segment, do the last one first to maintain sorted order
+                existStarts.insert(start_bisect, outStart2)
+                existEnds.insert(start_bisect, outEnd2)
+                existCNs.insert(start_bisect, outCN)
+            if outStart1 < outEnd1:  # Also valid
+                existStarts.insert(start_bisect, outStart1)
+                existEnds.insert(start_bisect, outEnd1)
+                existCNs.insert(start_bisect, outCN)
+
+            # Check for any more overlaps
+            return self.mergeOverlappingCNVs(existStarts, existEnds, existCNs, newStart, newEnd, newCN)
+
+        # First, does this new segment actually overlap anything?
+        start_bisect = bisect.bisect_right(existEnds, newStart)
+        end_bisect = bisect.bisect_left(existStarts, newEnd)
+
+        if start_bisect == end_bisect:
+            # There are no overlaps. Simply add this new event in, and return it
+            existStarts.insert(start_bisect, newStart)
+            existEnds.insert(start_bisect, newEnd)
+            existCNs.insert(start_bisect, newCN)
+            return existStarts, existEnds, existCNs
+
+        # Grab the first overlap
+        oldStart = existStarts[start_bisect]
+        oldEnd = existEnds[start_bisect]
+        oldCN = existCNs[start_bisect]
+
+        # Simplest case first. If both these events have the same CN state, lets merge them together
+        if oldCN == newCN:
+
+            outStart = oldStart if oldStart < newStart else newStart
+            outEnd = oldEnd if oldEnd > newEnd else newEnd
+            # Delete the existing event
+            existStarts.pop(start_bisect)
+            existEnds.pop(start_bisect)
+            existCNs.pop(start_bisect)
+
+            # Check for any more overlaps
+            return self.mergeOverlappingCNVs(existStarts, existEnds, existCNs, outStart, outEnd, newCN)
+        else:
+            # These segments overlap and have different CN states.
+            # Lets keep the highest-level event
+            if newCN <= 2 and oldCN <= 2: # Deletion
+                if oldCN < newCN:
+                    # The older event is a "higher"-level deletion
+                    return reduceNewEvent(existStarts, existEnds, existCNs, newStart, newEnd, newCN, oldStart, oldEnd)
+                else:
+                    return reduceOldEvent(existStarts, existEnds, existCNs, newStart, newEnd, newCN, oldStart, oldEnd, oldCN)
+            if newCN >= 2 and oldCN >= 2:  # Gain/Amp
+                if oldCN > newCN:
+                    # The older event is a higher level gain. Split/truncate the new event
+                    return reduceNewEvent(existStarts, existEnds, existCNs, newStart, newEnd, newCN, oldStart,
+                                            oldEnd)
+                else:
+                    return reduceOldEvent(existStarts, existEnds, existCNs, newStart, newEnd, newCN, oldStart, oldEnd,
+                                          oldCN)
+            else:
+                # One event must be a gain/amp, while the other is a deletion. In this case, keep both, and subset the
+                # larger event by the smaller one
+                if oldEnd - oldStart < newEnd - newStart:
+                    # The older event is smaller. Split the newer event
+                    return reduceNewEvent(existStarts, existEnds, existCNs, newStart, newEnd, newCN, oldStart,
+                                            oldEnd)
+                else:
+                    # The newer event is smaller. We should split the older event
+                    return reduceOldEvent(existStarts, existEnds, existCNs, newStart, newEnd, newCN, oldStart, oldEnd,
+                                          oldCN)
+
+
+
     def add(self, chrom: str, start: int, end: int, cn: int):
 
         assert start < end
@@ -100,12 +222,17 @@ class SampleCNVs:
             # If we have seen events on this chromosome before, we need to compare this new segment with existing segments
             # In theory, events should be non-overlapping, but I don't want to assume that because then things will break
             # horribly later
+
+            self.starts[chrom], self.ends[chrom], self.cn_states[chrom] = \
+                self.mergeOverlappingCNVs(self.starts[chrom], self.ends[chrom], self.cn_states[chrom], start, end, cn)
+            self.len_seg[chrom] = len(self.cn_states)
+            """
             # Find where this new event falls compared to the existing events
-            start_bisect = bisect.bisect_right(self.starts[chrom], start)
-            end_bisect = bisect.bisect_left(self.ends[chrom], end)
+            start_bisect = bisect.bisect_right(self.ends[chrom], start)
+            end_bisect = bisect.bisect_left(self.starts[chrom], end)
 
             # Case 1: This segment falls after existing segments. In this case, just add the new segment
-            if start_bisect == self.len_seg[chrom]:
+            if start_bisect == self.len_seg[chrom] and end_bisect == self.len_seg[chrom]:
                 self.starts[chrom].append(start)
                 self.ends[chrom].append(end)
                 self.cn_states[chrom].append(cn)
@@ -117,9 +244,10 @@ class SampleCNVs:
                 self.cn_states[chrom].insert(end_bisect, cn)
                 self.len_seg[chrom] += 1
             # Case 3 (we are getting more complicated) This segment overlaps existing segments.
-            # Deal with this later
             else:
-                raise NotImplementedError("Overlapping copy number segments are currently not supported")
+                # Its time for some RECURSSSION 
+                self.mergeOverlappingCNVs(self.starts[chrom], self.ends[chrom], self.cn_states[chrom], start, end, cn)
+            """
 
     def overlap_chrom(self, chromosome: Chromosome, threshold: float = 0.8):
 
@@ -451,7 +579,7 @@ def generate_mut_flat(in_maf: str, seq_type: str, gene_ids: dict, out_mut_flat: 
                "Nonstop_Mutation", "Splice_Site", "Translation_Start_Site"]
 
     # Which samples are we analyzing?
-    sample_list = set()
+    sample_list = SortedSet()
 
     required_cols = ["Hugo_Symbol", "Variant_Classification", "Tumor_Sample_Barcode"]
     optional_cols = ["NCBI_Build", "Start_Position", "HGVSp_Short", "HGVSp"]
@@ -890,7 +1018,7 @@ def generate_cnv_files(cnv_segs, gene_regions_bed, arm_regions, gene_ids, out_cn
             # Have we processed CNVs from this sample before?
             if cnv_attributes["Tumor_Sample_Barcode"] not in sample_cnvs:
                 sample_cnvs[cnv_attributes["Tumor_Sample_Barcode"]] = SampleCNVs()
-            # Sterilize input and ensure it is valid, and store these events
+            # Sterilize input and ensure it is valid, and store these eventsgrep CABN-0001_2015-08-11 all_exomes.sequenza.hg19.tsv | cut -f 2-4
             try:
                 cnv_attributes["CN"] = int(cnv_attributes["CN"])
                 sample_cnvs[cnv_attributes["Tumor_Sample_Barcode"]].add(

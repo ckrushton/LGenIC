@@ -83,7 +83,7 @@ class SampleCNVs:
         self.len_seg = {}
         self.is_chr_prefixed = None
 
-    def mergeOverlappingCNVs(self, existStarts: iter, existEnds: iter, existCNs: iter, newStart: int, newEnd: int, newCN:int):
+    def merge_overlapping_cnvs(self, existStarts: iter, existEnds: iter, existCNs: iter, newStart: int, newEnd: int, newCN:int):
         """
         Handle overlapping copy number segments, merging and editing existing segments as necessary
 
@@ -101,7 +101,7 @@ class SampleCNVs:
         :return: A tuple containing the new and old events. Ex {[newEvent1, newEvent2], [oldEvent1, oldEvent2]}
         """
 
-        def reduceNewEvent(existStarts, existEnds, existCNs, newStart, newEnd, newCN, oldStart, oldEnd):
+        def reduce_new_event(existStarts, existEnds, existCNs, newStart, newEnd, newCN, oldStart, oldEnd):
 
             # The existing event has higher priority than the old event
             # Truncate the newer event
@@ -112,14 +112,14 @@ class SampleCNVs:
             outStart2 = oldEnd
             outEnd2 = newEnd
             if outStart1 < outEnd1:  # Valid segment, process
-                existStarts, existEnds, existCNs = self.mergeOverlappingCNVs(existStarts, existEnds, existCNs,
+                existStarts, existEnds, existCNs = self.merge_overlapping_cnvs(existStarts, existEnds, existCNs,
                                                                              outStart1, outEnd1, newCN)
             if outStart2 < outEnd2:  # Valid segment
-                existStarts, existEnds, existCNs = self.mergeOverlappingCNVs(existStarts, existEnds, existCNs,
+                existStarts, existEnds, existCNs = self.merge_overlapping_cnvs(existStarts, existEnds, existCNs,
                                                                              outStart2, outEnd2, newCN)
             return existStarts, existEnds, existCNs
 
-        def reduceOldEvent(existStarts, existEnds, existCNs, newStart, newEnd, newCN, oldStart, oldEnd, oldCN):
+        def reduce_old_event(existStarts, existEnds, existCNs, newStart, newEnd, newCN, oldStart, oldEnd, oldCN):
 
             # The newer event is a "higher"-level deletion
             # Split/Truncate the older event
@@ -143,7 +143,7 @@ class SampleCNVs:
                 existCNs.insert(start_bisect, outCN)
 
             # Check for any more overlaps
-            return self.mergeOverlappingCNVs(existStarts, existEnds, existCNs, newStart, newEnd, newCN)
+            return self.merge_overlapping_cnvs(existStarts, existEnds, existCNs, newStart, newEnd, newCN)
 
         # First, does this new segment actually overlap anything?
         start_bisect = bisect.bisect_right(existEnds, newStart)
@@ -172,36 +172,35 @@ class SampleCNVs:
             existCNs.pop(start_bisect)
 
             # Check for any more overlaps
-            return self.mergeOverlappingCNVs(existStarts, existEnds, existCNs, outStart, outEnd, newCN)
+            return self.merge_overlapping_cnvs(existStarts, existEnds, existCNs, outStart, outEnd, newCN)
         else:
             # These segments overlap and have different CN states.
             # Lets keep the highest-level event
             if newCN <= 2 and oldCN <= 2: # Deletion
                 if oldCN < newCN:
                     # The older event is a "higher"-level deletion
-                    return reduceNewEvent(existStarts, existEnds, existCNs, newStart, newEnd, newCN, oldStart, oldEnd)
+                    return reduce_new_event(existStarts, existEnds, existCNs, newStart, newEnd, newCN, oldStart, oldEnd)
                 else:
-                    return reduceOldEvent(existStarts, existEnds, existCNs, newStart, newEnd, newCN, oldStart, oldEnd, oldCN)
+                    return reduce_old_event(existStarts, existEnds, existCNs, newStart, newEnd, newCN, oldStart, oldEnd, oldCN)
             if newCN >= 2 and oldCN >= 2:  # Gain/Amp
                 if oldCN > newCN:
                     # The older event is a higher level gain. Split/truncate the new event
-                    return reduceNewEvent(existStarts, existEnds, existCNs, newStart, newEnd, newCN, oldStart,
+                    return reduce_new_event(existStarts, existEnds, existCNs, newStart, newEnd, newCN, oldStart,
                                             oldEnd)
                 else:
-                    return reduceOldEvent(existStarts, existEnds, existCNs, newStart, newEnd, newCN, oldStart, oldEnd,
+                    return reduce_old_event(existStarts, existEnds, existCNs, newStart, newEnd, newCN, oldStart, oldEnd,
                                           oldCN)
             else:
                 # One event must be a gain/amp, while the other is a deletion. In this case, keep both, and subset the
                 # larger event by the smaller one
                 if oldEnd - oldStart < newEnd - newStart:
                     # The older event is smaller. Split the newer event
-                    return reduceNewEvent(existStarts, existEnds, existCNs, newStart, newEnd, newCN, oldStart,
+                    return reduce_new_event(existStarts, existEnds, existCNs, newStart, newEnd, newCN, oldStart,
                                             oldEnd)
                 else:
                     # The newer event is smaller. We should split the older event
-                    return reduceOldEvent(existStarts, existEnds, existCNs, newStart, newEnd, newCN, oldStart, oldEnd,
+                    return reduce_old_event(existStarts, existEnds, existCNs, newStart, newEnd, newCN, oldStart, oldEnd,
                                           oldCN)
-
 
 
     def add(self, chrom: str, start: int, end: int, cn: int):
@@ -224,30 +223,9 @@ class SampleCNVs:
             # horribly later
 
             self.starts[chrom], self.ends[chrom], self.cn_states[chrom] = \
-                self.mergeOverlappingCNVs(self.starts[chrom], self.ends[chrom], self.cn_states[chrom], start, end, cn)
+                self.merge_overlapping_cnvs(self.starts[chrom], self.ends[chrom], self.cn_states[chrom], start, end, cn)
             self.len_seg[chrom] = len(self.cn_states)
-            """
-            # Find where this new event falls compared to the existing events
-            start_bisect = bisect.bisect_right(self.ends[chrom], start)
-            end_bisect = bisect.bisect_left(self.starts[chrom], end)
 
-            # Case 1: This segment falls after existing segments. In this case, just add the new segment
-            if start_bisect == self.len_seg[chrom] and end_bisect == self.len_seg[chrom]:
-                self.starts[chrom].append(start)
-                self.ends[chrom].append(end)
-                self.cn_states[chrom].append(cn)
-                self.len_seg[chrom] += 1
-            # Case 2: This segment falls between or before all existing segments. Also simple, just insert this segment the segment list
-            elif start_bisect == end_bisect:
-                self.starts[chrom].insert(start_bisect, end)
-                self.ends[chrom].insert(end_bisect, start)
-                self.cn_states[chrom].insert(end_bisect, cn)
-                self.len_seg[chrom] += 1
-            # Case 3 (we are getting more complicated) This segment overlaps existing segments.
-            else:
-                # Its time for some RECURSSSION 
-                self.mergeOverlappingCNVs(self.starts[chrom], self.ends[chrom], self.cn_states[chrom], start, end, cn)
-            """
 
     def overlap_chrom(self, chromosome: Chromosome, threshold: float = 0.8):
 
@@ -391,10 +369,10 @@ def get_args():
 
     epilog = os.linesep.join(["Note that genome and exome sequencing types are handled exactly the same",
                               "The --entrez-ids file must have the Hugo_Symbol under the column \"Approved Symbol\" and the Entrez ID under the column \"NCBI Gene ID(supplied by NCBI)\"",
-                              "The --cnvs file should contain the following colummns: Tumor_Sample_Barcode, chromosome, start, end, CNt",
+                              "The --cnvs file should contain the following colummns: Tumor_Sample_Barcode, chromosome, start, end, CN",
                               "The --arms file should contain the following columns: chromosome, start, end, arm"
                               ])
-    parser = argparse.ArgumentParser(description="Placeholder", epilog=epilog)
+    parser = argparse.ArgumentParser(description="Generates input files for the LymphGen classifier", epilog=epilog)
 
     input = parser.add_argument_group("Input files")
     input.add_argument("-m", "--maf", metavar="MAF", required=True, type=lambda x: is_valid_file(x, parser), help="Input MAF file listing somatic mutations")
@@ -564,7 +542,7 @@ def generate_mut_flat(in_maf: str, seq_type: str, gene_ids: dict, out_mut_flat: 
 
     The following MAF columns are required: Hugo_Symbol, Variant_Classification, Tumor_Sample_Barcode. If NCBI_Build and
     Start_Position are found, the output mutation flat file will contain an additional column specifying "Location".
-     If HGVSp_Short or HGVSp are found, MYD88 Leu273Pro mutations will be annotated as "L265P"
+     If Tumor_Seq_Allele2 is provided, the MYD88 hotspot mutations will be annotated as "L265P"
 
     :param in_maf: A string containing a filepath to a MAF file containing the variants of interest
     :param seq_type: A string specifying the sequencing type used to identify mutations. Only "targeted", "exome", and "genome" are supported
@@ -582,7 +560,7 @@ def generate_mut_flat(in_maf: str, seq_type: str, gene_ids: dict, out_mut_flat: 
     sample_list = SortedSet()
 
     required_cols = ["Hugo_Symbol", "Variant_Classification", "Tumor_Sample_Barcode"]
-    optional_cols = ["NCBI_Build", "Start_Position", "HGVSp_Short", "HGVSp"]
+    optional_cols = ["NCBI_Build", "Start_Position", "Tumor_Seq_Allele2"]
     header_cols = {}
     out_header_written = False
     out_header_cols = ["Sample", "ENTREZ.ID", "Type"]
@@ -624,9 +602,10 @@ def generate_mut_flat(in_maf: str, seq_type: str, gene_ids: dict, out_mut_flat: 
                 # See which optional columns we have
                 if "Start_Position" in header_cols:
                     out_header_cols.append("Location")
-                    sys.stderr.write("\'Start_Position\' column found in the MAF file. Output mutation flat file will be annotated with \'Position\'" + os.linesep)
-                if "HGVSp_Short" in header_cols or "HGVSp" in header_cols:
-                    sys.stderr.write("\'HGVSp_Short\' or \'HGVSp\' column found in the MAF file. Output mutation flat file will be annotated with \'L265P\' for MYD88 hotspot mutations" + os.linesep)
+                    sys.stderr.write("\'Start_Position\' column found in MAF file. Output mutation flat file will be annotated with \'Position\'" + os.linesep)
+                if "Tumor_Seq_Allele2" in header_cols:
+                    sys.stderr.write(
+                        "\'Tumor_Seq_Allele2\' column found in MAF file. MYD88 hotspot mutations will be annotated as \'L265P\'" + os.linesep)
                 continue
 
             # Process mutations
@@ -677,10 +656,8 @@ def generate_mut_flat(in_maf: str, seq_type: str, gene_ids: dict, out_mut_flat: 
                 continue
 
             # If this mutation is in MYD88, does it affect the hotspot?
-            if hugo_name == "MYD88":
-                if "HGVSp_Short" in mut_attributes and mut_attributes["HGVSp_Short"] == "p.L273P":
-                    type = "L265P"
-                elif "HGVSp" in mut_attributes and mut_attributes["HGVSp"] == "p.Leu273Pro":
+            if hugo_name == "MYD88" and "Tumor_Seq_Allele2" in mut_attributes:
+                if mut_attributes["Start_Position"] == "38182641" and mut_attributes["Tumor_Seq_Allele2"] == "C":
                     type = "L265P"
 
             # Finally, write this variant
@@ -981,13 +958,7 @@ def generate_cnv_files(cnv_segs, gene_regions_bed, arm_regions, gene_ids, out_cn
     sample_cnvs = {}
 
     i = 0
-    with open(cnv_segs) as f, open(out_cnv_gene, "w") as o:
-
-        # Write output file header
-        out_header = ["Sample", "ENTREZ.ID", "Type"]
-        o.write("\t".join(out_header))
-        o.write(os.linesep)
-
+    with open(cnv_segs) as f:
         for line in f:
             i += 1
             line = line.rstrip("\n").rstrip("\r")  # Remove line endings
@@ -1033,29 +1004,46 @@ def generate_cnv_files(cnv_segs, gene_regions_bed, arm_regions, gene_ids, out_cn
             if cnv_attributes["CN"] == 2:
                 continue
 
-            # Is this event focal? If so, lets find the genes it overlaps
-            if int(cnv_attributes["end"]) - int(cnv_attributes["start"]) < focal_cn_thresh:
-                # What type of event is this?
-                if cnv_attributes["CN"] > 3:
-                    event_type = "AMP"
-                elif cnv_attributes["CN"] > 2:
-                    event_type = "GAIN"
-                elif cnv_attributes["CN"] < 1:
-                    event_type = "HOMDEL"
-                elif cnv_attributes["CN"] < 2:
-                    event_type = "HETLOSS"
-                else:
-                    raise TypeError("Invalid copy number state \'%s\'" % cnv_attributes["CN"])
+    # Now that we have processed all CNVs, lets see which genes have events, and write those out
+    with open(out_cnv_gene, "w") as o:
 
-                olap_genes = get_overlap_genes(cnv_attributes["chromosome"], int(cnv_attributes["start"]), int(cnv_attributes["end"]), cnv_attributes["CN"], gene_coords)
-                # If any genes overlap, write out these genes
-                for gene in olap_genes:
-                    out_line = [cnv_attributes["Tumor_Sample_Barcode"],
-                                gene,
-                                event_type
-                                ]
-                    o.write("\t".join(out_line))
-                    o.write(os.linesep)
+        # Write output file header
+        out_header = ["Sample", "ENTREZ.ID", "Type"]
+        o.write("\t".join(out_header))
+        o.write(os.linesep)
+
+        # Process segments
+        for sample, cnvs in sample_cnvs.items():
+            for chrom in cnvs.cn_states.keys():
+                # parse each segment
+                for start, end, cn_state in zip(cnvs.starts[chrom], cnvs.ends[chrom], cnvs.cn_states[chrom]):
+
+                    # Ignore copy-neutral events
+                    if cn_state == 2:
+                        continue
+                    # Is this event focal? If so, lets find the genes it overlaps
+                    if end - start < focal_cn_thresh:
+                        # What type of event is this?
+                        if cn_state > 3:
+                            event_type = "AMP"
+                        elif cn_state > 2:
+                            event_type = "GAIN"
+                        elif cn_state < 1:
+                            event_type = "HOMDEL"
+                        elif cn_state < 2:
+                            event_type = "HETLOSS"
+                        else:
+                            raise TypeError("Invalid copy number state \'%s\'" % cn_state)
+
+                        olap_genes = get_overlap_genes(chrom, start, end, cn_state, gene_coords)
+                        # If any genes overlap, write out these genes
+                        for gene in olap_genes:
+                            out_line = [sample,
+                                        gene,
+                                        event_type
+                                        ]
+                            o.write("\t".join(out_line))
+                            o.write(os.linesep)
 
     # Now that we have processed all the CNVs, identify which samples have arm-level and whole chromosomal copy number changes
     with open(out_cnv_arm, "w") as o:

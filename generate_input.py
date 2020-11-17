@@ -8,6 +8,7 @@ import argparse
 import os
 import sys
 import bisect
+import logging
 from collections import Counter
 from sortedcontainers import SortedSet
 
@@ -82,6 +83,7 @@ class SampleCNVs:
         self.cn_states = {}
         self.len_seg = {}
         self.is_chr_prefixed = None
+        self.ploidy = None
 
     def merge_overlapping_cnvs(self, existStarts: iter, existEnds: iter, existCNs: iter, newStart: int, newEnd: int, newCN:int):
         """
@@ -339,6 +341,107 @@ class SampleCNVs:
         return events
 
 
+    def adjust_ploidy(self, arm_coords, sample_name, redo=False):
+        """
+        Adjust a sample's CN states based upon ploidy
+
+        Calculate the average copy number state across the entire genome. If a sample is not diploid, normalize all the CN
+        changes
+        :param arm_coords: A dictionary containing {"chromosome_name": Chromosome()} objects which list chromosomal coordinates
+        :param sample_name: A string specifying the sample name. Used for debugging/error purposes
+        :param redo: Should we override any existing ploidy state for this sample?
+        :return: None
+        """
+
+        if self.ploidy is not None and not redo:
+            # Ploidy for this sample has already been calculated. Don't do anything
+            return None
+
+        # Store the length affected for each ploidy state
+        ploidy_cov = {}
+        genome_size = 0
+
+        for chromosome in arm_coords.values():
+            # Find overlapping CNVs for this arm
+
+            # if the p or q arm coordinates are not set, use a placeholder
+            if chromosome.p_start is None:
+                chromosome.p_start = -100000
+                chromosome.p_end = -100000
+                chromosome.p_length = 1
+            if chromosome.q_start is None:
+                chromosome.q_start = -100000
+                chromosome.q_end = -100000
+                chromosome.q_length = 1
+
+            # Save the size of this chromosome
+            genome_size += chromosome.p_length
+            genome_size += chromosome.q_length
+
+            chrom_name = chromosome.chrom
+            # Handle "chr" prefix nonsense
+            if self.is_chr_prefixed and not chrom_name.startswith("chr"):
+                chrom_name = "chr" + chrom_name
+            elif not self.is_chr_prefixed and chrom_name.startswith("chr"):
+                chrom_name = chrom_name.replace("chr", "")
+            try:
+                chrom_starts = self.starts[chrom_name]
+            except KeyError:
+                # No CN events were provided for this chromosome, hence there can be no overlap
+                continue
+            chrom_ends = self.ends[chrom_name]
+            chrom_cn = self.cn_states[chrom_name]
+
+            # Check for overlapping segments for each arm
+            for (start, end, cn) in zip(chrom_starts, chrom_ends, chrom_cn):
+
+                # Check p-arm overlap
+                if end < chromosome.p_start or start > chromosome.q_end:
+                    # Segment falls out of range
+                    continue
+                if start < chromosome.p_end:
+                    olap_start = start if start > chromosome.p_start else chromosome.p_start
+                    olap_end = end if end < chromosome.p_end else chromosome.p_end
+
+                    # Store the length of this overlap and associated CN
+                    if cn not in ploidy_cov:
+                        ploidy_cov[cn] = 0
+                    ploidy_cov[cn] += olap_end - olap_start
+
+                if end > chromosome.q_start:  # We use an if, not elif, in case a segment overlaps both the p and q arm
+                    olap_start = start if start > chromosome.q_start else chromosome.q_start
+
+                    olap_end = end if end < chromosome.q_end else chromosome.q_end
+                    # Store the length of this overlap and associated CN
+                    if cn not in ploidy_cov:
+                        ploidy_cov[cn] = 0
+                    ploidy_cov[cn] += olap_end - olap_start
+
+        # Now that we have calculated the number of bases affected by each CN state, calculate the ploidy
+        x = 0
+        for cn, bases in ploidy_cov.items():
+            x += cn * bases
+
+        ploidy = x / genome_size
+        av_ploidy = round(ploidy)
+
+        # Sanity check
+        if av_ploidy < 1:
+            raise TypeError("Ploidy of sample \'%s\' was calculated to be below 1!" % sample_name)
+
+        # If this tumour is not diploid, adjust the ploidy
+        if av_ploidy != 2:
+            logging.debug("\'%s\' was calculated to have a ploidy of %s" % (sample_name, av_ploidy))
+            ploidy_dif = av_ploidy - 2
+            new_cns = {}
+            for chrom, cn in self.cn_states.items():
+                x = list(y - ploidy_dif for y in cn)
+                new_cns[chrom] = x
+            self.cn_states = new_cns
+
+        self.ploidy = av_ploidy
+
+
 def get_args():
 
     def is_valid_dir(path, parser):
@@ -553,8 +656,9 @@ def generate_mut_flat(in_maf: str, seq_type: str, gene_ids: dict, out_mut_flat: 
     """
 
     # Non-synonmymous mutation types:
-    non_syn = ["Frame_Shift_Del", "Frame_Shift_Ins", "In_Frame_Del", "In_Frame_Ins", "Missense_Mutation", "Nonsense_Mutation",
-               "Nonstop_Mutation", "Splice_Site", "Translation_Start_Site"]
+    non_syn = set(["In_Frame_Del", "In_Frame_Ins", "Missense_Mutation", "Nonsense_Mutation",
+               "Nonstop_Mutation", "Splice_Site", "Translation_Start_Site"])
+    trunc_mut = set(["Frame_Shift_Del", "Frame_Shift_Ins", "Nonsense_Mutation", "Nonstop_Mutation"])
 
     # Which samples are we analyzing?
     sample_list = SortedSet()
@@ -642,7 +746,7 @@ def generate_mut_flat(in_maf: str, seq_type: str, gene_ids: dict, out_mut_flat: 
                 position = None
 
             # Finally, specify the variant type
-            if mut_attributes["Variant_Classification"] == "Nonsense_Mutation":
+            if mut_attributes["Variant_Classification"] in trunc_mut:
                 genes_seen[entrez_id] = hugo_name  # This gene has a non-synonmymous mutation, so lets assume we have sequenced it
                 type = "TRUNC"
             elif mut_attributes["Variant_Classification"] in non_syn:
@@ -944,6 +1048,7 @@ def generate_cnv_files(cnv_segs, gene_regions_bed, arm_regions, gene_ids, out_cn
     :param focal_cn_thresh: The maximum size of an event for it to be considered "focal", in bp
     :return: A list of samples which have CNV information
     """
+    logging.info("Processing copy-number segments")
 
     # First things first, lets load in the gene regions file and figure out where each gene is
     gene_coords = load_gene_coords_bed(gene_regions_bed, gene_ids, alt_gene_ids=alt_gene_ids)
@@ -1004,7 +1109,13 @@ def generate_cnv_files(cnv_segs, gene_regions_bed, arm_regions, gene_ids, out_cn
             if cnv_attributes["CN"] == 2:
                 continue
 
+    # Now adjust for ploidy
+    logging.info("Adjusting sample ploidy")
+    for sample, cnvs in sample_cnvs.items():
+        cnvs.adjust_ploidy(arm_coods, sample)
+
     # Now that we have processed all CNVs, lets see which genes have events, and write those out
+    logging.info("Calculating gene overlap with CNVs")
     with open(out_cnv_gene, "w") as o:
 
         # Write output file header
@@ -1046,6 +1157,7 @@ def generate_cnv_files(cnv_segs, gene_regions_bed, arm_regions, gene_ids, out_cn
                             o.write(os.linesep)
 
     # Now that we have processed all the CNVs, identify which samples have arm-level and whole chromosomal copy number changes
+    logging.info("Calculating arm-level CNVs")
     with open(out_cnv_arm, "w") as o:
         # Write output header
         out_header = ["Sample", "Arm", "Type"]
@@ -1077,8 +1189,7 @@ def generate_cnv_files(cnv_segs, gene_regions_bed, arm_regions, gene_ids, out_cn
 
 def generate_sample_annot(samples: iter, cnv_samples: iter, out_sample_annot: str):
 
-    # Placeholder
-
+    logging.info("Generating sample annotation file")
     with open(out_sample_annot , "w") as o:
         # Write sample annotation file header
         out_header_cols = ["Sample.ID", "Copy.Number", "BCL2.transloc","BCL6.transloc"]

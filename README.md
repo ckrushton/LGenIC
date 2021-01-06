@@ -27,8 +27,8 @@ four columns: chromosome, start, arm. Examples of these files can be found in th
 ## Output
 gene_list: A list of Entrez IDs examined. If exome or genome is specified, this contains all genes
 
-sample_annotation: Specifies sample information, and which samples have CN info, BCL2 and MYC translocations. If you have SV info, the translocation
-status of BCL2 and MYC should be specified in this file (0=No event, 1=Translocation)
+sample_annotation: Specifies sample information, and which samples have CN info, BCL2 and BCL6 translocations. If you have SV info, the translocation
+status of BCL2 and BCL6 should be specified in this file (0=No event, 1=Translocation)
 
 mutation_flat: Contains all mutations. Note that only 5'UTR mutations are specified as "Synon", irrespective of their distance to the TSS
 

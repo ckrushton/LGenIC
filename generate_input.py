@@ -12,7 +12,6 @@ import logging
 from collections import Counter
 from sortedcontainers import SortedSet
 
-
 class Gene:
     """
     A simple class storing the chromosome, start, end, and name of a gene
@@ -207,7 +206,17 @@ class SampleCNVs:
 
     def add(self, chrom: str, start: int, end: int, cn: int):
 
-        assert start < end
+        # For LymphGen compatability: Strip "chr" prefix
+        chrom = chrom.replace("chr", "")
+
+        if end <= start:
+            if start == end:
+                # This segment has a length of 0?!. Skip this I guesss
+                return None
+            else:
+                # This segment has a negative length??
+                raise TypeError("Invalid CNV segment: \'%s:%s-%s\'" % (chrom, start, end))
+
         # Have we seen any events for this chromosome before?
         if chrom not in self.len_seg:
             # If not, just store this segment. Simple!
@@ -254,10 +263,10 @@ class SampleCNVs:
         chrom_ends = self.ends[chrom_name]
         chrom_cn = self.cn_states[chrom_name]
 
-        homdel_sum = {"p": 0, "q": 0, "chrom": 0}
-        del_sum = {"p": 0, "q": 0, "chrom": 0}
-        gain_sum = {"p": 0, "q": 0, "chrom": 0}
-        amp_sum = {"p": 0, "q": 0, "chrom": 0}
+        homdel_sum = {"p": 0, "q": 0, "Chrom": 0}
+        del_sum = {"p": 0, "q": 0, "Chrom": 0}
+        gain_sum = {"p": 0, "q": 0, "Chrom": 0}
+        amp_sum = {"p": 0, "q": 0, "Chrom": 0}
 
         # Check for overlapping segments for each arm
         for (start, end, cn) in zip(chrom_starts, chrom_ends, chrom_cn):
@@ -274,47 +283,47 @@ class SampleCNVs:
                 olap_end = end if end < chromosome.p_end else chromosome.p_end
                 if cn < 2:
                     del_sum["p"] += olap_end - olap_start
-                    del_sum["chrom"] +=  olap_end - olap_start
+                    del_sum["Chrom"] +=  olap_end - olap_start
                     if cn < 1:
                         homdel_sum["p"] += olap_end - olap_start
-                        homdel_sum["chrom"] += olap_end - olap_start
+                        homdel_sum["Chrom"] += olap_end - olap_start
                 elif cn > 2:
                     gain_sum["p"] += olap_end - olap_start
-                    gain_sum["chrom"] += olap_end - olap_start
+                    gain_sum["Chrom"] += olap_end - olap_start
                     if cn > 3:
                         amp_sum["p"] += olap_end - olap_start
-                        amp_sum["chrom"] += olap_end - olap_start
+                        amp_sum["Chrom"] += olap_end - olap_start
 
             if end > chromosome.q_start:  # We use an if, not elif, in case a segment overlaps both the p and q arm
                 olap_start = start if start > chromosome.q_start else chromosome.q_start
                 olap_end = end if end < chromosome.q_end else chromosome.q_end
                 if cn < 2:
                     del_sum["q"] += olap_end - olap_start
-                    del_sum["chrom"] +=  olap_end - olap_start
+                    del_sum["Chrom"] +=  olap_end - olap_start
                     if cn < 1:
                         homdel_sum["q"] += olap_end - olap_start
-                        homdel_sum["chrom"] += olap_end - olap_start
+                        homdel_sum["Chrom"] += olap_end - olap_start
                 elif cn > 2:
                     gain_sum["q"] += olap_end - olap_start
-                    gain_sum["chrom"] += olap_end - olap_start
+                    gain_sum["Chrom"] += olap_end - olap_start
                     if cn > 3:
                         amp_sum["q"] += olap_end - olap_start
-                        amp_sum["chrom"] += olap_end - olap_start
+                        amp_sum["Chrom"] += olap_end - olap_start
 
         events = {}
         # Now, calculate the fraction of each overlap
         # Start from the highest level and biggest event, and work our way down/smaller
         # Amplifications/gains
-        if amp_sum["chrom"] / (chromosome.p_length + chromosome.q_length) > threshold: # Whole chromosome Amp
-            events[chrom_name + "chrom"] = "AMP"
+        if amp_sum["Chrom"] / (chromosome.p_length + chromosome.q_length) > threshold: # Whole chromosome Amp
+            events[chrom_name + "Chrom"] = "AMP"
         # Now check for arm level events
         else:
             if amp_sum["p"] / chromosome.p_length > threshold:  # p Amp
                 events[chrom_name + "p"] = "AMP"
             elif amp_sum["q"] / chromosome.q_length > threshold:  # q Amp
                 events[chrom_name + "q"] = "AMP"
-            if chrom_name + "chrom" not in events and gain_sum["chrom"] / (chromosome.p_length + chromosome.q_length) > threshold:  # Whole chromosome gain
-                events[chrom_name + "chrom"] = "GAIN"
+            if chrom_name + "Chrom" not in events and gain_sum["Chrom"] / (chromosome.p_length + chromosome.q_length) > threshold:  # Whole chromosome gain
+                events[chrom_name + "Chrom"] = "GAIN"
             else:
                 if chrom_name + "p" not in events and gain_sum["p"] / chromosome.p_length > threshold:  # p Gain
                     events[chrom_name + "p"] = "GAIN"
@@ -322,16 +331,16 @@ class SampleCNVs:
                     events[chrom_name + "q"] = "GAIN"
 
         # Homozygous and heterozygous deletions
-        if homdel_sum["chrom"] / (chromosome.p_length + chromosome.q_length) > threshold: # Whole chromosome Homozygous deletion
-            events[chrom_name + "chrom"] = "HOMDEL"
+        if homdel_sum["Chrom"] / (chromosome.p_length + chromosome.q_length) > threshold: # Whole chromosome Homozygous deletion
+            events[chrom_name + "Chrom"] = "HOMDEL"
         # Now check for arm level events
         else:
             if homdel_sum["p"] / chromosome.p_length > threshold:  # p HOMDEL
                 events[chrom_name + "p"] = "HOMDEL"
             elif homdel_sum["q"] / chromosome.q_length > threshold:  # q HOMDEL
                 events[chrom_name + "q"] = "HOMDEL"
-            if chrom_name + "chrom" not in events and del_sum["chrom"] / (chromosome.p_length + chromosome.q_length) > threshold:  # Whole chromosome deletions
-                events[chrom_name + "chrom"] = "HETLOSS"
+            if chrom_name + "Chrom" not in events and del_sum["Chrom"] / (chromosome.p_length + chromosome.q_length) > threshold:  # Whole chromosome deletions
+                events[chrom_name + "Chrom"] = "HETLOSS"
             else:
                 if chrom_name + "p" not in events and del_sum["p"] / chromosome.p_length > threshold:  # p deletion
                     events[chrom_name + "p"] = "HETLOSS"
@@ -470,20 +479,22 @@ def get_args():
         else:
             raise parser.error("Unable to locate \'%s\': No such file or directory" % path)
 
-    epilog = os.linesep.join(["Note that genome and exome sequencing types are handled exactly the same",
-                              "The --entrez-ids file must have the Hugo_Symbol under the column \"Approved Symbol\" and the Entrez ID under the column \"NCBI Gene ID(supplied by NCBI)\"",
-                              "The --cnvs file should contain the following colummns: Tumor_Sample_Barcode, chromosome, start, end, CN",
-                              "The --arms file should contain the following columns: chromosome, start, end, arm"
+    epilog = os.linesep.join(["The --arms, --entrez_ids, and --lymphgen_genes files can be found in the \'resources\' folder. ",
+                              "Note that genome and exome sequencing types are handled exactly the same. ",
+                              "The --entrez-ids file must have the Hugo_Symbol under the column \"Approved Symbol\" and the Entrez ID under the column \"NCBI Gene ID(supplied by NCBI)\". ",
+                              "The --cnvs file should contain the following colummns: Tumor_Sample_Barcode, chromosome, start, end, CN. ",
+                              "The --arms file should contain the following columns: chromosome, start, end, arm. "
                               ])
-    parser = argparse.ArgumentParser(description="Generates input files for the LymphGen classifier", epilog=epilog)
+    parser = argparse.ArgumentParser(description="Generates input files for the LymphGen classifier", epilog=epilog, formatter_class=argparse.RawDescriptionHelpFormatter)
+    snvs_args = parser.add_argument_group("Input mutation files")
+    snvs_args.add_argument("-m", "--maf", metavar="MAF", required=True, type=lambda x: is_valid_file(x, parser), help="Input MAF file listing somatic mutations")
+    snvs_args.add_argument("-e", "--entrez_ids", metavar="TSV", required=True, type=lambda x: is_valid_file(x, parser), help="A tab-delimited file containing gene names (Hugo Symbol) and the corresponding Entrez gene ID")
+    cnv_args = parser.add_argument_group("(Optional) Input CNV files")
+    cnv_args.add_argument("-c", "--cnvs", metavar="TSV", default=None, type=lambda x: is_valid_file(x, parser), help="Input tab-delimited file summarizing copy number events")
+    cnv_args.add_argument("-g", "--genes", metavar="BED", default=None, type=lambda x: is_valid_file(x, parser), help="Input BED4+ file listing start and end positions of genes/exons")
+    cnv_args.add_argument("-a", "--arms", metavar="TSV", default=None, type=lambda x: is_valid_file(x, parser), help="Input tab-delimited file listing the positions of chromosome arms")
 
-    input = parser.add_argument_group("Input files")
-    input.add_argument("-m", "--maf", metavar="MAF", required=True, type=lambda x: is_valid_file(x, parser), help="Input MAF file listing somatic mutations")
-    input.add_argument("-e", "--entrez_ids", metavar="TSV", required=True, type=lambda x: is_valid_file(x, parser), help="A tab-delimited file containing gene names (Hugo Symbol) and the corresponding Entrez gene ID")
-    input.add_argument("-c", "--cnvs", metavar="TSV", default=None, type=lambda x: is_valid_file(x, parser), help="Input tab-delimited file summarizing copy number events")
-    input.add_argument("-g", "--genes", metavar="BED", default=None, type=lambda x: is_valid_file(x, parser), help="Input BED4+ file listing start and end positions of genes/exons")
-    input.add_argument("-a", "--arms", metavar="TSV", default=None, type=lambda x: is_valid_file(x, parser), help="Input tab-delimited file listing the positions of chromosome arms")
-
+    parser.add_argument("-l", "--lymphgen_genes", metavar="TXT", default=None, type=lambda x: is_valid_file(x, parser), required=False, help="An optional file listing all Entrez IDs considered by the LymphGen classifier. Output will be subset to these genes")
     parser.add_argument("-s", "--sequencing_type", metavar="SEQ", choices=["targeted", "exome", "genome"], required=True, help="Sequencing type used to obtain somatic mutations")
     parser.add_argument("-o", "--outdir", metavar="PATH", required=True, type=lambda x: is_valid_dir(x, parser), help="Output directory for LymphGen input files")
     parser.add_argument("--outprefix", metavar="STRING", default=None, help="Output files will be prefixed using this string [Default: Use the base name of the MAF file]")
@@ -511,6 +522,7 @@ def load_entrez_ids(entrez_file: str, hugo_column: str="Approved symbol", entrez
     from this source.
     The "Approval Status" column is optional, but will be used to remove gene names which have since been withdrawn.
     If the "Previous symbols" solumn is included, these gene names will also be assigned to that Entrez ID
+    The subset_file should list one Entrez ID per line
     All extra columns are ignored
 
     :param entrez_file: A string containing a filepath to a tsv file containing the gene names and gene IDs
@@ -529,6 +541,7 @@ def load_entrez_ids(entrez_file: str, hugo_column: str="Approved symbol", entrez
     status_col_num = None  # Optional
     prev_name_col_num = None  # Optional
     i = 0
+
     with open(entrez_file) as f:
         for line in f:
             i += 1
@@ -600,10 +613,6 @@ def load_entrez_ids(entrez_file: str, hugo_column: str="Approved symbol", entrez
                     continue
                 alt_hugo_name_to_id[hugo_name] = entrez_id
 
-    # If some genes were missing Entrez IDs, let the user know
-    if len(skipped_genes) > 0:
-        sys.stderr.write("WARNING: %s genes has no corresponding Entrez ID" % len(skipped_genes) + os.linesep)
-
     # Final sanity check: As Hugo Symbols and Entrez IDs have a 1-1 mapping, make sure there are no duplicate Entrez IDs
     if len(hugo_name_to_id) != len(set(hugo_name_to_id.values())):
         num_ids = Counter(hugo_name_to_id.values())
@@ -615,7 +624,26 @@ def load_entrez_ids(entrez_file: str, hugo_column: str="Approved symbol", entrez
     return hugo_name_to_id, alt_hugo_name_to_id
 
 
-def generate_mut_flat(in_maf: str, seq_type: str, gene_ids: dict, out_mut_flat: str, out_gene_list: str, alt_gene_ids: dict = None):
+def load_subset_ids(id_file):
+    """
+    Loads a set of Entrez IDs from a specified file. One ID/line
+
+    :param id_file:
+    """
+
+    subset_ids = []
+    with open(id_file) as f:
+        for line in f:
+            line = line.rstrip("\n").rstrip("\r")
+            if not line.isdigit():
+                raise TypeError("Invalid Entrez ID when processing the --lyphmgen_genes file: %s" % line)
+            subset_ids.append(line)
+
+    subset_ids = set(subset_ids)
+    return subset_ids
+
+
+def generate_mut_flat(in_maf: str, seq_type: str, gene_ids: dict, out_mut_flat: str, out_gene_list: str, alt_gene_ids: dict = None, subset_ids: iter = None):
     """
     Converts a MAF file into the mutation flat file and gene list used by LymphGen
     WARNING: GRCh37/hg19 is currently only supported!
@@ -652,6 +680,8 @@ def generate_mut_flat(in_maf: str, seq_type: str, gene_ids: dict, out_mut_flat: 
     :param gene_ids: A dictionary containing the mapping between Hugo_Symbol: Entrez_Gene_ID.
     :param out_mut_flat: A string specifying the output path to the mutation flat file
     :param out_gene_list: A string specifying the output path to the gene list
+    :param alt_gene_ids: An additional dictionary specifying alternate Hugo_Symbol: Entrez_Gene_ID mappings
+    :param subset_ids: An interable specifying a list of Entrez IDs. Only mutations within these Entrez IDs will be output
     :return: A list specifying all samples analyzed for mutations
     """
 
@@ -659,6 +689,7 @@ def generate_mut_flat(in_maf: str, seq_type: str, gene_ids: dict, out_mut_flat: 
     non_syn = set(["In_Frame_Del", "In_Frame_Ins", "Missense_Mutation", "Nonsense_Mutation",
                "Nonstop_Mutation", "Splice_Site", "Translation_Start_Site"])
     trunc_mut = set(["Frame_Shift_Del", "Frame_Shift_Ins", "Nonsense_Mutation", "Nonstop_Mutation"])
+    synon_mut = set(["Silent", "5'UTR", "5'UTR", "Intron"])  # Use for the "Synon" mutation type
 
     # Which samples are we analyzing?
     sample_list = SortedSet()
@@ -752,17 +783,24 @@ def generate_mut_flat(in_maf: str, seq_type: str, gene_ids: dict, out_mut_flat: 
             elif mut_attributes["Variant_Classification"] in non_syn:
                 genes_seen[entrez_id] = hugo_name  # This gene has a non-synonmymous mutation, so lets assume we have sequenced it
                 type = "MUTATION"
-            elif mut_attributes["Variant_Classification"] == "5'UTR":
+            elif mut_attributes["Variant_Classification"] in synon_mut:
                 genes_seen[entrez_id] = hugo_name
-                type = "Synon"  # TODO: Include mutations within 4kb of TSS
+                type = "Synon"
             else:
-                # Ignore silent mutation, Intronic mutations etc
+                # Ignore intronic mutations, 3'UTRs etc
                 continue
 
             # If this mutation is in MYD88, does it affect the hotspot?
             if hugo_name == "MYD88" and "Tumor_Seq_Allele2" in mut_attributes:
                 if mut_attributes["Start_Position"] == "38182641" and mut_attributes["Tumor_Seq_Allele2"] == "C":
                     type = "L265P"
+
+            if sample_name not in sample_list:
+                sample_list.add(sample_name)
+
+            # If this gene isn't in the subset list provide it, skip it
+            if subset_ids is not None and entrez_id not in subset_ids:
+                continue
 
             # Finally, write this variant
             # Write a header line, if we have not done so already
@@ -774,13 +812,11 @@ def generate_mut_flat(in_maf: str, seq_type: str, gene_ids: dict, out_mut_flat: 
             out_line = [sample_name, entrez_id, type, position + os.linesep]
             o.write("\t".join(out_line))
 
-            sample_list.add(sample_name)
-
     # Check to see that we actually converted mutations
     if len(genes_seen) == 0:
         raise AttributeError("No mutations were successfully converted. Check that the --entrez_ids file has valid Hugo Symbols matching the --maf file")
     elif skipped_mut:
-        sys.stderr.write("Warning: %s mutations in the MAF file were not converted, as no valid Entrez ID was found for those variants" % len(skipped_mut))
+        sys.stderr.write("Warning: %s mutations in the MAF file were not converted. These either don't have a valid Entrez ID, or they were not in the --lymphgen_gene file" % len(skipped_mut))
         sys.stderr.write(os.linesep)
 
     # Generate the gene list file
@@ -791,6 +827,8 @@ def generate_mut_flat(in_maf: str, seq_type: str, gene_ids: dict, out_mut_flat: 
 
         # Write out all genes we have seen a mutation in
         for entrez_id in genes_seen.keys():
+            if subset_ids is not None and entrez_id not in subset_ids:
+                continue  # Skip these gene, as it wasn't in the --lymphgen_gene list
             o.write(entrez_id)
             o.write(os.linesep)
 
@@ -799,6 +837,8 @@ def generate_mut_flat(in_maf: str, seq_type: str, gene_ids: dict, out_mut_flat: 
             for entrez_id in gene_ids.values():
                 if entrez_id in genes_seen:  # We have already written out this gene. Skip it
                     continue
+                if subset_ids is not None and entrez_id not in subset_ids:
+                    continue  # Skip these gene, as it wasn't in the --lymphgen_gene list
                 o.write(entrez_id)
                 o.write(os.linesep)
 
@@ -853,6 +893,7 @@ def load_gene_coords_bed(bed_file, gene_ids, alt_gene_ids=None):
 
             start = int(start)
             end = int(end)
+            chrom = chrom.replace("chr", "")
 
             # Is the gene name the Hugo Symbol or the Entrez gene ID?
             # If its an integer, lets assume its the Entrez ID
@@ -895,10 +936,6 @@ def load_gene_coords_bed(bed_file, gene_ids, alt_gene_ids=None):
     # If we haven't, it means the input file likely didn't contain Hugo Symbols
     if len(gene_coords) == 0:
         raise AttributeError("No Hugo Symbols from the --genes file (column 4) were found in the --entrez_ids file. An example gene is %s" % (skipped_genes[0]))
-    elif len(skipped_genes) > 0:
-        skipped_genes = set(skipped_genes)  # Remove duplicate entries (ex. multiple exons corresponding to the same gene)
-        sys.stderr.write("WARNING: %s genes in the --genes file did not have a corresonding Entrez ID" % len(skipped_genes))
-        sys.stderr.write(os.linesep)
 
     return gene_coords
 
@@ -952,6 +989,10 @@ def load_chrom_arm(arm_file):
 
             # Have we seen this chromosome before? If not, lets create an object to store its genomic features
             chrom = arm_attributes["chromosome"]
+
+            # Strip chr prefix
+            chrom = chrom.replace("chr", "")
+
             if chrom not in arm_chrom:
                 arm_chrom[chrom] = Chromosome(chrom)
 
@@ -1019,7 +1060,7 @@ def get_overlap_genes(chrom: str, start: int, end: int, copy_num: int, gene_cord
     return olap_genes
 
 
-def generate_cnv_files(cnv_segs, gene_regions_bed, arm_regions, gene_ids, out_cnv_gene, out_cnv_arm, sample_ids, alt_gene_ids=None, focal_cn_thresh:int = 30000000):
+def generate_cnv_files(cnv_segs, gene_regions_bed, arm_regions, gene_ids, out_cnv_gene, out_cnv_arm, sample_ids, alt_gene_ids=None, subset_ids=None, focal_cn_thresh:int = 30000000):
     """
     Characterize focal and arm-level copy number events, and summarize them in the respective output files.
 
@@ -1045,6 +1086,7 @@ def generate_cnv_files(cnv_segs, gene_regions_bed, arm_regions, gene_ids, out_cn
     :param out_cnv_arm: A string specifying the cnv_arm output file
     :param sample_ids: A list containing samples which have one or more somatic mutations
     :param alt_gene_ids: An additional dictionary mapping {Hugo_Symbol: Entrez_IDs}. Used if previous Hugo_Symbols were assigned to a gene
+    :param subset_ids: An iterable listing a set of Entrez IDs. Only CNVs overlapping these genes will be output
     :param focal_cn_thresh: The maximum size of an event for it to be considered "focal", in bp
     :return: A list of samples which have CNV information
     """
@@ -1096,14 +1138,21 @@ def generate_cnv_files(cnv_segs, gene_regions_bed, arm_regions, gene_ids, out_cn
                 sample_cnvs[cnv_attributes["Tumor_Sample_Barcode"]] = SampleCNVs()
             # Sterilize input and ensure it is valid, and store these eventsgrep CABN-0001_2015-08-11 all_exomes.sequenza.hg19.tsv | cut -f 2-4
             try:
+                start = int(cnv_attributes["start"])
+                end = int(cnv_attributes["end"])
+                # Remove segments which are of length 0
+                if start == end:
+                    continue
                 cnv_attributes["CN"] = int(cnv_attributes["CN"])
                 sample_cnvs[cnv_attributes["Tumor_Sample_Barcode"]].add(
                     cnv_attributes["chromosome"],
-                    int(cnv_attributes["start"]),
-                    int(cnv_attributes["end"]),
+                    start,
+                    end,
                     cnv_attributes["CN"])
             except ValueError as e:
                 raise TypeError("Unable to process line %s of \'%s\': start, end, and CN must be integers" % (i, cnv_segs)) from e
+            except TypeError as e:
+                raise AttributeError("Unable to process line %s of \'%s\': \'%s\': End coordinate of segment occurs before start" % (i, cnv_segs, line)) from e
 
             # If this event is copy-neutral, we don't care what genes it overlaps
             if cnv_attributes["CN"] == 2:
@@ -1149,6 +1198,10 @@ def generate_cnv_files(cnv_segs, gene_regions_bed, arm_regions, gene_ids, out_cn
                         olap_genes = get_overlap_genes(chrom, start, end, cn_state, gene_coords)
                         # If any genes overlap, write out these genes
                         for gene in olap_genes:
+
+                            # If a list of genes to subset to was provided, subset those genes
+                            if subset_ids is not None and gene not in subset_ids:
+                                continue  # Skip this gene, as it was not in the list provided
                             out_line = [sample,
                                         gene,
                                         event_type
@@ -1175,11 +1228,11 @@ def generate_cnv_files(cnv_segs, gene_regions_bed, arm_regions, gene_ids, out_cn
 
                 events = cnvs.overlap_chrom(chrom_info)
                 # If there are large-scale CNVs in this sample, output them to the Arm flat file
-                for arm, type in events.items():
+                for arm, c_type in events.items():
                     out_line = [
                         sample,
                         arm,
-                        type
+                        c_type
                     ]
                     o.write("\t".join(out_line))
                     o.write(os.linesep)
@@ -1219,16 +1272,21 @@ def main(args=None):
     # First, load in the mapping of Gene names and NCBI/Entrez IDs
     gene_ids, alt_gene_ids = load_entrez_ids(args.entrez_ids)
 
+    # If a --lymphgen_genes file was provided, load those genes
+    subset_ids = None
+    if args.lymphgen_genes:
+        subset_ids = load_subset_ids(args.lymphgen_genes)
+
     # Generate the mutation flat file and gene list using the input MAF file and Entrez IDs
     out_mut_flat = args.outdir + os.sep + args.outprefix + "_mutation_flat.tsv"
     out_gene_list = args.outdir + os.sep + args.outprefix + "_gene_list.txt"
-    sample_list = generate_mut_flat(args.maf, args.sequencing_type, gene_ids, out_mut_flat, out_gene_list, alt_gene_ids = alt_gene_ids)
+    sample_list = generate_mut_flat(args.maf, args.sequencing_type, gene_ids, out_mut_flat, out_gene_list, alt_gene_ids = alt_gene_ids, subset_ids=subset_ids)
 
     # Generate the copy number gene list file and arm flat file
     if args.cnvs:
         out_cnv_gene = args.outdir + os.sep + args.outprefix + "_cnv_flat.tsv"
         out_cnv_arm = args.outdir + os.sep + args.outprefix + "_cnv_arm.tsv"
-        cnv_sample_list = generate_cnv_files(args.cnvs, args.genes, args.arms, gene_ids, out_cnv_gene, out_cnv_arm, sample_list, alt_gene_ids=alt_gene_ids)
+        cnv_sample_list = generate_cnv_files(args.cnvs, args.genes, args.arms, gene_ids, out_cnv_gene, out_cnv_arm, sample_list, alt_gene_ids=alt_gene_ids, subset_ids=subset_ids)
     else:
         cnv_sample_list = set()
 

@@ -486,13 +486,13 @@ def get_args():
                               "The --cnvs file should contain the following colummns: Tumor_Sample_Barcode, chromosome, start, end, CN. ",
                               "The --arms file should contain the following columns: chromosome, start, end, arm. "
                               ])
-    parser = argparse.ArgumentParser(description="Generates input files for the LymphGen classifier", epilog=epilog, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(description="Generates input files for the LymphGen classifier\nVersion 1.0.0", epilog=epilog, formatter_class=argparse.RawDescriptionHelpFormatter)
     snvs_args = parser.add_argument_group("Input mutation files")
     snvs_args.add_argument("-m", "--maf", metavar="MAF", required=True, type=lambda x: is_valid_file(x, parser), help="Input MAF file listing somatic mutations")
     snvs_args.add_argument("-e", "--entrez_ids", metavar="TSV", required=True, type=lambda x: is_valid_file(x, parser), help="A tab-delimited file containing gene names (Hugo Symbol) and the corresponding Entrez gene ID")
     cnv_args = parser.add_argument_group("(Optional) Input CNV files")
     cnv_args.add_argument("-c", "--cnvs", metavar="TSV", default=None, type=lambda x: is_valid_file(x, parser), help="Input tab-delimited file summarizing copy number events")
-    cnv_args.add_argument("--log2", action="store_true", help="Does the input CNV file provide log2 ratios? (i.e. log2(absoluteCN) - 1)")
+    cnv_args.add_argument("--log2", action="store_true", help="Does the input CNV file use log2 ratios? (i.e. log2(absoluteCN) - 1)")
     cnv_args.add_argument("-g", "--genes", metavar="BED", default=None, type=lambda x: is_valid_file(x, parser), help="Input BED4+ file listing start and end positions of genes/exons")
     cnv_args.add_argument("-a", "--arms", metavar="TSV", default=None, type=lambda x: is_valid_file(x, parser), help="Input tab-delimited file listing the positions of chromosome arms")
 
@@ -500,6 +500,7 @@ def get_args():
     parser.add_argument("-s", "--sequencing_type", metavar="SEQ", choices=["targeted", "exome", "genome"], required=True, help="Sequencing type used to obtain somatic mutations")
     parser.add_argument("-o", "--outdir", metavar="PATH", required=True, type=lambda x: is_valid_dir(x, parser), help="Output directory for LymphGen input files")
     parser.add_argument("--outprefix", metavar="STRING", default=None, help="Output files will be prefixed using this string [Default: Use the base name of the MAF file]")
+    parser.add_argument("-v", "--verbose", choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], help="Set logging verbosity")
 
     args = parser.parse_args()
     # If no outprefix was set, use the basename of the maf file as the output prefix
@@ -510,6 +511,10 @@ def get_args():
     if args.cnvs:
         if not args.genes or not args.arms:
             raise parser.error("--genes and --arms are required if --cnvs is specified")
+
+    if args.verbose:
+        logging.basicConfig(level=getattr(logging, args.verbose))
+
     return args
 
 
@@ -1154,7 +1159,7 @@ def generate_cnv_files(cnv_segs, gene_regions_bed, arm_regions, gene_ids, out_cn
                     if cn_state < 0:
                         cn_state = 0
                 elif cn_state < 0:  # Sanity check that the user didn't accidentally provide log2 ratios
-                    raise AttributeError("Unable to process line %s of \'%s\': \'%s\': Negative CN state. Did you mean to specify the --log2 flag?" % (i, cnv_segs, line))
+                    raise AttributeError("Unable to process line %s of \'%s\': \'%s\': Negative copy number segment. Did you mean to specify the --log2 flag?" % (i, cnv_segs, line))
 
                 cnv_attributes["CN"] = round(cn_state)
 

@@ -5,6 +5,7 @@
 # classifier. See https://llmpp.nih.gov/lymphgen/index.php for more information
 
 import argparse
+import math
 import os
 import sys
 import bisect
@@ -12,11 +13,11 @@ import logging
 from collections import Counter
 from sortedcontainers import SortedSet
 
+
 class Gene:
     """
     A simple class storing the chromosome, start, end, and name of a gene
     """
-
     __slots__ = ["name", "chrom", "start", "end"]
 
     def __init__(self, chrom, start, end, name):
@@ -93,9 +94,9 @@ class SampleCNVs:
          truncating or even breaking apart the copy-neutral segment in the process. In the worse case senario,
         this will lead to three different segments being created
 
-        :param oldStart: The start position of the existing segment
-        :param oldEnd: The end position of the existing segment
-        :param oldCN: The copy number state of the existing segment
+        :param existStarts: The start position of the existing segment
+        :param existEnds: The end position of the existing segment
+        :param existCNs: The copy number state of the existing segment
         :param newStart: The start position of the new segment
         :param newEnd: The end position of the new segment
         :param newCN: The copy number state of the new segment
@@ -491,6 +492,7 @@ def get_args():
     snvs_args.add_argument("-e", "--entrez_ids", metavar="TSV", required=True, type=lambda x: is_valid_file(x, parser), help="A tab-delimited file containing gene names (Hugo Symbol) and the corresponding Entrez gene ID")
     cnv_args = parser.add_argument_group("(Optional) Input CNV files")
     cnv_args.add_argument("-c", "--cnvs", metavar="TSV", default=None, type=lambda x: is_valid_file(x, parser), help="Input tab-delimited file summarizing copy number events")
+    cnv_args.add_argument("--log2", action="store_true", help="Does the input CNV file provide log2 ratios? (i.e. log2(absoluteCN) - 1)")
     cnv_args.add_argument("-g", "--genes", metavar="BED", default=None, type=lambda x: is_valid_file(x, parser), help="Input BED4+ file listing start and end positions of genes/exons")
     cnv_args.add_argument("-a", "--arms", metavar="TSV", default=None, type=lambda x: is_valid_file(x, parser), help="Input tab-delimited file listing the positions of chromosome arms")
 
@@ -686,13 +688,13 @@ def generate_mut_flat(in_maf: str, seq_type: str, gene_ids: dict, out_mut_flat: 
     """
 
     # Non-synonmymous mutation types:
-    non_syn = set(["In_Frame_Del", "In_Frame_Ins", "Missense_Mutation", "Nonsense_Mutation",
-               "Nonstop_Mutation", "Splice_Site", "Translation_Start_Site"])
-    trunc_mut = set(["Frame_Shift_Del", "Frame_Shift_Ins", "Nonsense_Mutation", "Nonstop_Mutation"])
-    synon_mut = set(["Silent", "5'UTR", "5'UTR", "Intron"])  # Use for the "Synon" mutation type
+    non_syn = {"In_Frame_Del", "In_Frame_Ins", "Missense_Mutation", "Nonsense_Mutation",
+                "Nonstop_Mutation", "Splice_Site", "Translation_Start_Site"}
+    trunc_mut = {"Frame_Shift_Del", "Frame_Shift_Ins", "Nonsense_Mutation", "Nonstop_Mutation"}
+    synon_mut = {"Silent", "5'UTR", "5'UTR", "Intron"}  # Use for the "Synon" mutation type
 
     # Which samples are we analyzing?
-    sample_list = SortedSet()
+    sample_list = SortedSet()  # Used to ensure the output files are in somewhat sorted order
 
     required_cols = ["Hugo_Symbol", "Variant_Classification", "Tumor_Sample_Barcode"]
     optional_cols = ["NCBI_Build", "Start_Position", "Tumor_Seq_Allele2"]
@@ -761,7 +763,7 @@ def generate_mut_flat(in_maf: str, seq_type: str, gene_ids: dict, out_mut_flat: 
                 if hugo_name == "Unknown":
                     continue
                 entrez_id = gene_ids[hugo_name]
-            except KeyError as e:
+            except KeyError:
                 # If this gene does not have a Entrez ID, are we prehaps using an older Hugo_Symbol?
                 if hugo_name in alt_gene_ids:
                     entrez_id = alt_gene_ids[hugo_name]
@@ -1060,7 +1062,7 @@ def get_overlap_genes(chrom: str, start: int, end: int, copy_num: int, gene_cord
     return olap_genes
 
 
-def generate_cnv_files(cnv_segs, gene_regions_bed, arm_regions, gene_ids, out_cnv_gene, out_cnv_arm, sample_ids, alt_gene_ids=None, subset_ids=None, focal_cn_thresh:int = 30000000):
+def generate_cnv_files(cnv_segs, gene_regions_bed, arm_regions, gene_ids, out_cnv_gene, out_cnv_arm, sample_ids, alt_gene_ids=None, subset_ids=None, input_log2: bool= False, focal_cn_thresh:int = 30000000):
     """
     Characterize focal and arm-level copy number events, and summarize them in the respective output files.
 
@@ -1087,11 +1089,13 @@ def generate_cnv_files(cnv_segs, gene_regions_bed, arm_regions, gene_ids, out_cn
     :param sample_ids: A list containing samples which have one or more somatic mutations
     :param alt_gene_ids: An additional dictionary mapping {Hugo_Symbol: Entrez_IDs}. Used if previous Hugo_Symbols were assigned to a gene
     :param subset_ids: An iterable listing a set of Entrez IDs. Only CNVs overlapping these genes will be output
+    :param input_log2: Does the input file contain log2 ratios instead of absolute CN?
     :param focal_cn_thresh: The maximum size of an event for it to be considered "focal", in bp
     :return: A list of samples which have CNV information
     """
     logging.info("Processing copy-number segments")
-
+    if input_log2:
+        logging.info("Converting from log2 ratios")
     # First things first, lets load in the gene regions file and figure out where each gene is
     gene_coords = load_gene_coords_bed(gene_regions_bed, gene_ids, alt_gene_ids=alt_gene_ids)
 
@@ -1136,27 +1140,33 @@ def generate_cnv_files(cnv_segs, gene_regions_bed, arm_regions, gene_ids, out_cn
             # Have we processed CNVs from this sample before?
             if cnv_attributes["Tumor_Sample_Barcode"] not in sample_cnvs:
                 sample_cnvs[cnv_attributes["Tumor_Sample_Barcode"]] = SampleCNVs()
-            # Sterilize input and ensure it is valid, and store these eventsgrep CABN-0001_2015-08-11 all_exomes.sequenza.hg19.tsv | cut -f 2-4
+            # Sterilize input and ensure it is valid, and store these events
             try:
                 start = int(cnv_attributes["start"])
                 end = int(cnv_attributes["end"])
                 # Remove segments which are of length 0
                 if start == end:
                     continue
-                cnv_attributes["CN"] = int(cnv_attributes["CN"])
+                # Is the CN state absolute CN or log2 ratios? If log2 ratios, convert to absolute CN
+                cn_state = float(cnv_attributes["CN"])
+                if input_log2:
+                    cn_state = math.pow(2, cn_state + 1)
+                    if cn_state < 0:
+                        cn_state = 0
+                elif cn_state < 0:  # Sanity check that the user didn't accidentally provide log2 ratios
+                    raise AttributeError("Unable to process line %s of \'%s\': \'%s\': Negative CN state. Did you mean to specify the --log2 flag?" % (i, cnv_segs, line))
+
+                cnv_attributes["CN"] = round(cn_state)
+
                 sample_cnvs[cnv_attributes["Tumor_Sample_Barcode"]].add(
                     cnv_attributes["chromosome"],
                     start,
                     end,
                     cnv_attributes["CN"])
             except ValueError as e:
-                raise TypeError("Unable to process line %s of \'%s\': start, end, and CN must be integers" % (i, cnv_segs)) from e
+                raise TypeError("Unable to process line %s of \'%s\': start, end, and CN must be numeric" % (i, cnv_segs)) from e
             except TypeError as e:
                 raise AttributeError("Unable to process line %s of \'%s\': \'%s\': End coordinate of segment occurs before start" % (i, cnv_segs, line)) from e
-
-            # If this event is copy-neutral, we don't care what genes it overlaps
-            if cnv_attributes["CN"] == 2:
-                continue
 
     # Now adjust for ploidy
     logging.info("Adjusting sample ploidy")
@@ -1286,7 +1296,7 @@ def main(args=None):
     if args.cnvs:
         out_cnv_gene = args.outdir + os.sep + args.outprefix + "_cnv_flat.tsv"
         out_cnv_arm = args.outdir + os.sep + args.outprefix + "_cnv_arm.tsv"
-        cnv_sample_list = generate_cnv_files(args.cnvs, args.genes, args.arms, gene_ids, out_cnv_gene, out_cnv_arm, sample_list, alt_gene_ids=alt_gene_ids, subset_ids=subset_ids)
+        cnv_sample_list = generate_cnv_files(args.cnvs, args.genes, args.arms, gene_ids, out_cnv_gene, out_cnv_arm, sample_list, alt_gene_ids=alt_gene_ids, subset_ids=subset_ids, input_log2=args.log2)
     else:
         cnv_sample_list = set()
 

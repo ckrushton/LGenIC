@@ -7,7 +7,6 @@
 import argparse
 import math
 import os
-import sys
 import bisect
 import logging
 from collections import Counter
@@ -500,7 +499,7 @@ def get_args():
     parser.add_argument("-s", "--sequencing_type", metavar="SEQ", choices=["targeted", "exome", "genome"], required=True, help="Sequencing type used to obtain somatic mutations")
     parser.add_argument("-o", "--outdir", metavar="PATH", required=True, type=lambda x: is_valid_dir(x, parser), help="Output directory for LymphGen input files")
     parser.add_argument("--outprefix", metavar="STRING", default=None, help="Output files will be prefixed using this string [Default: Use the base name of the MAF file]")
-    parser.add_argument("-v", "--verbose", choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], help="Set logging verbosity")
+    parser.add_argument("-v", "--verbose", choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'], default="INFO", help="Set logging verbosity")
 
     args = parser.parse_args()
     # If no outprefix was set, use the basename of the maf file as the output prefix
@@ -512,8 +511,7 @@ def get_args():
         if not args.genes or not args.arms:
             raise parser.error("--genes and --arms are required if --cnvs is specified")
 
-    if args.verbose:
-        logging.basicConfig(level=getattr(logging, args.verbose))
+    logging.basicConfig(level=getattr(logging, args.verbose), format='%(levelname)s:%(message)s')
 
     return args
 
@@ -691,6 +689,7 @@ def generate_mut_flat(in_maf: str, seq_type: str, gene_ids: dict, out_mut_flat: 
     :param subset_ids: An interable specifying a list of Entrez IDs. Only mutations within these Entrez IDs will be output
     :return: A list specifying all samples analyzed for mutations
     """
+    logging.info("Processing MAF file")
 
     # Non-synonmymous mutation types:
     non_syn = {"In_Frame_Del", "In_Frame_Ins", "Missense_Mutation", "Nonsense_Mutation",
@@ -744,10 +743,10 @@ def generate_mut_flat(in_maf: str, seq_type: str, gene_ids: dict, out_mut_flat: 
                 # See which optional columns we have
                 if "Start_Position" in header_cols:
                     out_header_cols.append("Location")
-                    sys.stderr.write("\'Start_Position\' column found in MAF file. Output mutation flat file will be annotated with \'Position\'" + os.linesep)
+                    logging.info("\'Start_Position\' column found in MAF file. Output mutation flat file will be annotated with \'Position\'")
                 if "Tumor_Seq_Allele2" in header_cols:
-                    sys.stderr.write(
-                        "\'Tumor_Seq_Allele2\' column found in MAF file. MYD88 hotspot mutations will be annotated as \'L265P\'" + os.linesep)
+                    logging.info(
+                        "\'Tumor_Seq_Allele2\' column found in MAF file. MYD88 hotspot mutations will be annotated as \'L265P\'")
                 continue
 
             # Process mutations
@@ -823,9 +822,10 @@ def generate_mut_flat(in_maf: str, seq_type: str, gene_ids: dict, out_mut_flat: 
     if len(genes_seen) == 0:
         raise AttributeError("No mutations were successfully converted. Check that the --entrez_ids file has valid Hugo Symbols matching the --maf file")
     elif skipped_mut:
-        sys.stderr.write("Warning: %s mutations in the MAF file were not converted. These either don't have a valid Entrez ID, or they were not in the --lymphgen_gene file" % len(skipped_mut))
-        sys.stderr.write(os.linesep)
+        logging.warning("%s mutations in the MAF file were not converted. These either don't have a valid Entrez ID, or they were not in the --lymphgen_gene file" % len(skipped_mut))
 
+    logging.info("Finished processing MAF file")
+    logging.info("Generating gene list")
     # Generate the gene list file
     # This file a single column with the Entrez ID, as that is all LymphGen currently supports
     with open(out_gene_list, "w") as o:
@@ -1100,7 +1100,7 @@ def generate_cnv_files(cnv_segs, gene_regions_bed, arm_regions, gene_ids, out_cn
     """
     logging.info("Processing copy-number segments")
     if input_log2:
-        logging.info("Converting from log2 ratios")
+        logging.debug("Converting from log2 ratios")
     # First things first, lets load in the gene regions file and figure out where each gene is
     gene_coords = load_gene_coords_bed(gene_regions_bed, gene_ids, alt_gene_ids=alt_gene_ids)
 

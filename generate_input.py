@@ -692,10 +692,9 @@ def generate_mut_flat(in_maf: str, seq_type: str, gene_ids: dict, out_mut_flat: 
     logging.info("Processing MAF file")
 
     # Non-synonmymous mutation types:
-    non_syn = {"In_Frame_Del", "In_Frame_Ins", "Missense_Mutation", "Nonsense_Mutation",
-                "Nonstop_Mutation", "Splice_Site", "Translation_Start_Site"}
-    trunc_mut = {"Frame_Shift_Del", "Frame_Shift_Ins", "Nonsense_Mutation", "Nonstop_Mutation"}
-    synon_mut = {"Silent", "5'UTR", "5'UTR", "Intron"}  # Use for the "Synon" mutation type
+    non_syn = {"In_Frame_Del", "In_Frame_Ins", "Missense_Mutation"}
+    trunc_mut = {"Frame_Shift_Del", "Frame_Shift_Ins", "Nonsense_Mutation", "Nonstop_Mutation", "Splice_Site", "Translation_Start_Site"}
+    synon_mut = {"Silent", "5'UTR", "5'Flank", "Intron", "3'UTR"}  # Use for the "Synon" mutation type
 
     # Which samples are we analyzing?
     sample_list = SortedSet()  # Used to ensure the output files are in somewhat sorted order
@@ -1234,7 +1233,8 @@ def generate_cnv_files(cnv_segs, gene_regions_bed, arm_regions, gene_ids, out_cn
 
         for sample, cnvs in sample_cnvs.items():
             if sample not in sample_ids:
-                raise AttributeError("Sample \'%s\' was provided in the input CNVs file, but no mutations were detected for this sample in the MAF file" % sample)
+                logging.warning("Sample \'%s\' was provided in the input CNVs file, but no SNVs were found. Skipping..." % sample)
+                continue
             for chrom, chrom_info in arm_coods.items():
 
                 # For now, skip chromosome X and Y as those aren't supported?
